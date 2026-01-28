@@ -26,6 +26,8 @@
 #include "wifi_data_model_parse.h"
 #include "wifi_data_model.h"
 #include "wifi_dml_api.h"
+#include "wifi_dml_json_parser.h"
+#include "wfa/wfa_data_model.h"
 
 /* Forward declarations for JSON schema parsing functions */
 static cJSON* resolve_ref(cJSON* root, const char* ref_str);
@@ -33,13 +35,10 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node);
 static bool schema_has_type(cJSON* schema, const char* want);
 static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props);
 static void parse_readwrite(cJSON* schema_node, data_model_properties_t* props);
-static void handle_property_node(cJSON* root, const char* full_path, cJSON* property_schema, bus_handle_t *handle);
-static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_path, bus_handle_t *handle);
+static void handle_property_node(cJSON* root, const char* full_path, cJSON* property_schema, bus_handle_t *handle, bus_callback_setter_fn callback_setter);
+static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_path, bus_handle_t *handle, bus_callback_setter_fn callback_setter);
 static char* yang_to_tr181_path(const char* yang_path);
-static int wfa_bus_register_namespace(bus_handle_t *handle, const char *full_namespace, 
-                                       bus_element_type_t element_type, bus_callback_table_t cb_table, 
-                                       data_model_properties_t data_model_value, int num_of_rows);
-static int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table);
+static bool parse_and_register_schema_internal(bus_handle_t *handle, cJSON* root, const char* base_path, const char* search_key, bus_callback_setter_fn callback_setter);
 
 /* String replace helper function */
 static char* str_replace(const char* str, const char* from, const char* to)
@@ -250,6 +249,30 @@ static void parse_property_constraints(cJSON* schema_node, data_model_properties
     if (maximum && cJSON_IsNumber(maximum)) {
         props->max_data_range = maximum->valuedouble;
     }
+
+    if (schema_has_type(schema_node, "string")  ) {
+        cJSON* str_enum = cJSON_GetObjectItem(schema_node, "enum");
+    
+        props->data_format = bus_data_type_string;
+
+        // TODO add pattern handler and validation
+        if (str_enum && cJSON_IsArray(str_enum)) {
+            props->num_of_str_validation = cJSON_GetArraySize(str_enum);
+            props->str_validation = malloc(sizeof(char *) * props->num_of_str_validation);
+
+            for (uint32_t i = 0; i < props->num_of_str_validation; i++) {
+                cJSON *item = cJSON_GetArrayItem(str_enum, i);
+                if (item != NULL && cJSON_IsString(item)) {
+                    props->str_validation[i] = malloc(strlen(item->valuestring) + 1);
+                    strncpy(props->str_validation[i], item->valuestring, strlen(item->valuestring) + 1);
+                }
+            }
+        }
+    } else if (schema_has_type(schema_node, "boolean") || schema_has_type(schema_node, "bool")) {
+        props->data_format = bus_data_type_boolean;
+    } else if (schema_has_type(schema_node, "integer")) {
+        props->data_format = bus_data_type_uint32;
+    }
 }
 
 static void parse_readwrite(cJSON* schema_node, data_model_properties_t* props)
@@ -294,7 +317,7 @@ static bool schema_has_type(cJSON* schema, const char* want)
 }
 
 /* Handle ANY property under an object: decide if TABLE or PROPERTY */
-static void handle_property_node(cJSON* root, const char* full_path, cJSON* property_schema, bus_handle_t *handle)
+static void handle_property_node(cJSON* root, const char* full_path, cJSON* property_schema, bus_handle_t *handle, bus_callback_setter_fn callback_setter)
 {
     bus_callback_table_t cb_table;
     data_model_properties_t data_model_value;
@@ -303,10 +326,10 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
     cJSON* items = NULL;
     cJSON* items_eff = NULL;
     cJSON* item_props = NULL;
-    char table_name[512] = {0};
+    bus_name_string_t table_name = {0};
     char* tr181_path = NULL;
     
-    if (!property_schema || !full_path || !handle) {
+    if (!property_schema || !full_path || !handle || !callback_setter) {
         return;
     }
     
@@ -318,14 +341,14 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
     if (!effective) {
         return;
     }
-    
+
     /* 2) If effective has properties -> expand (this handles $ref -> object with properties) */
     props_obj = cJSON_GetObjectItem(effective, "properties");
     if (props_obj && cJSON_IsObject(props_obj)) {
-        traverse_schema(root, effective, full_path, handle);
+        traverse_schema(root, effective, full_path, handle, callback_setter);
         return;
     }
-    
+
     /* 3) If type is array -> register TABLE, and examine items, only if array type is object */
     if (schema_has_type(effective, "array")) {
         /* now inspect items */
@@ -333,16 +356,16 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
         if (!items) {
             return;
         }
-        
+
         items_eff = follow_ref_if_any(root, items);
         if (!items_eff) {
             return;
         }
-        
+
         item_props = cJSON_GetObjectItem(items_eff, "properties");
         if (item_props && cJSON_IsObject(item_props)) {
             snprintf(table_name, sizeof(table_name), "%s.{i}", full_path);
-            
+
             /* reset and fill constraints for the array property itself */
             memset(&data_model_value, 0, sizeof(data_model_value));
             parse_property_constraints(effective, &data_model_value);
@@ -350,29 +373,29 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
             
             tr181_path = yang_to_tr181_path(table_name);
             if (tr181_path) {
-                wfa_set_bus_callbackfunc_pointers(tr181_path, &cb_table);
-                wfa_bus_register_namespace(handle, tr181_path, bus_element_type_table, cb_table, data_model_value, 1);
+                callback_setter(tr181_path, &cb_table);
+                bus_register_namespace(handle, tr181_path, bus_element_type_table, cb_table, data_model_value, 1);
                 free(tr181_path);
             }
-            
+
             /* expand row children under table_name */
-            traverse_schema(root, items_eff, table_name, handle);
+            traverse_schema(root, items_eff, table_name, handle, callback_setter);
         } else {
             /* primitive array -> register the row as property */
             memset(&data_model_value, 0, sizeof(data_model_value));
             parse_property_constraints(items_eff, &data_model_value);
             parse_readwrite(items_eff, &data_model_value);
-            
+
             tr181_path = yang_to_tr181_path(full_path);
             if (tr181_path) {
-                wfa_set_bus_callbackfunc_pointers(tr181_path, &cb_table);
-                wfa_bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
+                callback_setter(tr181_path, &cb_table);
+                bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
                 free(tr181_path);
             }
         }
         return;
     }
-    
+
     /* 4) If type is object (but had no direct properties above),
        try to resolve any nested $ref and check again */
     if (schema_has_type(effective, "object")) {
@@ -380,83 +403,139 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
         memset(&data_model_value, 0, sizeof(data_model_value));
         parse_property_constraints(effective, &data_model_value);
         parse_readwrite(effective, &data_model_value);
-        
+        data_model_value.data_format = bus_data_type_object;
+
         tr181_path = yang_to_tr181_path(full_path);
         if (tr181_path) {
-            wfa_set_bus_callbackfunc_pointers(tr181_path, &cb_table);
-            wfa_bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
+            callback_setter(tr181_path, &cb_table);
+            bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
             free(tr181_path);
         }
         return;
     }
-    
-    /* 5) Fallback: primitive (string/number/boolean/enum) - register as property */
+
+    /* 5) Fallback: primitive (string/number/boolean/enum) - register parent object callback */
+    /* For primitive properties, register callback for the parent object, but keep full property path */
     memset(&data_model_value, 0, sizeof(data_model_value));
     parse_property_constraints(effective, &data_model_value);
     parse_readwrite(effective, &data_model_value);
-    
+
+    /* Extract parent object path by removing the last component for callback registration */
+    char* parent_path = strdup(full_path);
+    if (parent_path) {
+        char* last_dot = strrchr(parent_path, '.');
+        if (last_dot) {
+            *last_dot = '\0';  /* Truncate at last dot to get parent path */
+            
+            /* Register callback for parent object */
+            char* parent_tr181_path = yang_to_tr181_path(parent_path);
+            if (parent_tr181_path) {
+                callback_setter(parent_tr181_path, &cb_table);
+                /* Set NULL table handlers for primitive property callbacks */
+                cb_table.table_remove_row_handler = NULL;
+                cb_table.table_add_row_handler = NULL;
+                free(parent_tr181_path);
+            }
+        }
+        free(parent_path);
+    }
+
+    /* Register the property itself with full path */
     tr181_path = yang_to_tr181_path(full_path);
     if (tr181_path) {
-        wfa_set_bus_callbackfunc_pointers(tr181_path, &cb_table);
-        wfa_bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
+        bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
         free(tr181_path);
     }
 }
 
 /* Traverse object schema and process all "properties" */
-static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_path, bus_handle_t *handle)
+static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_path, bus_handle_t *handle, bus_callback_setter_fn callback_setter)
 {
     cJSON* effective = NULL;
     cJSON* props = NULL;
     cJSON* child = NULL;
-    char new_path[512] = {0};
-    
-    if (!schema_node || !base_path || !handle) {
+    bus_name_string_t new_path = {0};
+
+    if (!schema_node || !handle || !callback_setter) {
         return;
     }
-    
+
     /* ensure we operate on resolved node (if schema_node is a wrapper with $ref) */
     effective = follow_ref_if_any(root, schema_node);
     if (!effective) {
         return;
     }
-    
+
     props = cJSON_GetObjectItem(effective, "properties");
     if (!props || !cJSON_IsObject(props)) {
         return;
     }
-    
+
     child = props->child;
     while (child) {
         if (child->string) {
-
-            if (base_path[strlen(base_path) - 1] != '.') {
+            /* Handle NULL or empty base_path */
+            if (base_path == NULL || strlen(base_path) == 0) {
+                snprintf(new_path, sizeof(new_path), "%s", child->string);
+            } else if (base_path[strlen(base_path) - 1] != '.') {
                 snprintf(new_path, sizeof(new_path), "%s.%s", base_path, child->string);
             } else {
                 snprintf(new_path, sizeof(new_path), "%s%s", base_path, child->string);
             }
-            
+
             /* pass the child's schema node (not child->child) because child is a property pair */
-            handle_property_node(root, new_path, child, handle);
+            handle_property_node(root, new_path, child, handle, callback_setter);
         }
         child = child->next;
     }
 }
 
-/* Entry function to parse and register WFA schema */
-static bool parse_and_register_json_schema(bus_handle_t *handle, const char *filename)
+/* Internal function to process parsed JSON schema */
+static bool parse_and_register_schema_internal(bus_handle_t *handle, cJSON* root, const char* base_path,
+    const char* search_key, bus_callback_setter_fn callback_setter)
+{
+    cJSON* props = NULL;
+    cJSON* child = NULL;
+    
+    if (!handle || !root || !callback_setter) {
+        return false;
+    }
+    
+    /* Find element matching search key */
+    props = cJSON_GetObjectItem(root, "properties");
+    if (!props) {
+        return false;
+    }
+    
+    child = props->child;
+    while (child) {
+        /* If search_key is NULL, process all children, otherwise find matching child */
+        if (!search_key || (child->string && strstr(child->string, search_key) != NULL)) {
+            traverse_schema(root, child, base_path, handle, callback_setter);
+            if (search_key) {
+                break;
+            }
+        }
+        child = child->next;
+    }
+    
+    return true;
+}
+
+/* Entry function to parse and register JSON schema from file */
+static bool parse_json_schema_file(bus_handle_t *handle, const char *filename, const char *base_path, const char *search_key, bus_callback_setter_fn callback_setter)
 {
     FILE* f = NULL;
     long size = 0;
     char* buf = NULL;
     size_t read_bytes = 0;
     cJSON* root = NULL;
-    cJSON* props = NULL;
-    cJSON* child = NULL;
+    bool result = false;
     
     /* Load file */
     f = fopen(filename, "rb");
     if (!f) {
+        wifi_util_error_print(WIFI_DMCLI, "%s:%d: Failed to open file: %s\n", __func__, __LINE__, filename);
         return false;
     }
     
@@ -483,89 +562,60 @@ static bool parse_and_register_json_schema(bus_handle_t *handle, const char *fil
     free(buf);
     
     if (!root) {
+        wifi_util_error_print(WIFI_DMCLI, "%s:%d: Failed to parse JSON file: %s\n", __func__, __LINE__, filename);
         return false;
     }
     
-    /* Find top-level Network element */
-    props = cJSON_GetObjectItem(root, "properties");
-    if (!props) {
-        cJSON_Delete(root);
-        return false;
-    }
-    
-    child = props->child;
-    while (child) {
-        if (child->string && strstr(child->string, "Network") != NULL) {
-            traverse_schema(root, child, "Device.WiFi.DataElements.Network", handle);
-            break;
-        }
-        child = child->next;
-    }
+    /* Parse schema with provided parameters */
+    result = parse_and_register_schema_internal(handle, root, base_path, search_key, callback_setter);
     
     cJSON_Delete(root);
-    return true;
+    return result;
 }
 
-/* Stub implementations - these would need to be properly implemented */
-static int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
-{
-    /* TODO: Implement proper callback function pointer assignment based on namespace */
-    /* For now, use default handlers */
-    bus_data_cb_func_t bus_default_data_cb = { " ",
-        { default_get_param_value, default_set_param_value, default_table_add_row_handler,
-          default_table_remove_row_handler, default_event_sub_handler, NULL }
-    };
-
-    memcpy(cb_table, &bus_default_data_cb.cb_func, sizeof(bus_callback_table_t));
-
-    return RETURN_OK;
-}
-
-static int wfa_bus_register_namespace(bus_handle_t *handle, const char *full_namespace, 
-                                       bus_element_type_t element_type, bus_callback_table_t cb_table, 
-                                       data_model_properties_t data_model_value, int num_of_rows)
-{
-    /* Reuse existing bus_register_namespace function */
-    return bus_register_namespace(handle, (char*)full_namespace, element_type, cb_table, data_model_value, num_of_rows);
-}
-
-/**
- * @brief Parse and register WFA Data Elements JSON schema
- * 
- * This function parses the WFA Data Elements JSON Schema (e.g., Data_Elements_JSON_Schema_v3.0.json)
- * and automatically registers all elements with the bus system. It handles:
- * - JSON $ref resolution
- * - oneOf/anyOf schema combinations
- * - Array types (registered as tables)
- * - Object types with properties
- * - Primitive types
- * - YANG to TR-181 path conversion
- * 
- * @param handle Pointer to the bus handle
- * @param json_schema_filename Path to the JSON schema file
- * @return RETURN_OK on success, RETURN_ERR on failure
- */
-int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema_filename)
+int parse_json_schema_and_register(bus_handle_t *handle, const char *json_schema_filename, 
+                                   const char *base_path, const char *search_key,
+                                   bus_callback_setter_fn callback_setter)
 {
     bool result = false;
     
-    if (!handle || !json_schema_filename) {
+    if (!handle || !json_schema_filename || !callback_setter) {
         wifi_util_error_print(WIFI_DMCLI, "%s:%d: Invalid parameters\n", __func__, __LINE__);
         return RETURN_ERR;
     }
     
-    wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing WFA Data Elements schema: %s\n", 
-                        __func__, __LINE__, json_schema_filename);
+    if (!base_path || strlen(base_path) == 0) {
+        wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing JSON schema: %s with no base path\n", 
+                            __func__, __LINE__, json_schema_filename);
+    } else {
+        wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing JSON schema: %s with base path: %s\n", 
+                            __func__, __LINE__, json_schema_filename, base_path);
+    }
     
-    result = parse_and_register_json_schema(handle, json_schema_filename);
+    result = parse_json_schema_file(handle, json_schema_filename, base_path, search_key, callback_setter);
     
     if (result) {
-        wifi_util_info_print(WIFI_DMCLI, "%s:%d: Successfully parsed and registered WFA schema\n", 
+        wifi_util_info_print(WIFI_DMCLI, "%s:%d: Successfully parsed and registered schema\n", 
                             __func__, __LINE__);
         return RETURN_OK;
     } else {
-        wifi_util_error_print(WIFI_DMCLI, "%s:%d: Failed to parse WFA schema: %s\n", 
+        wifi_util_error_print(WIFI_DMCLI, "%s:%d: Failed to parse schema: %s\n", 
                              __func__, __LINE__, json_schema_filename);
         return RETURN_ERR;
     }
+}
+
+int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema_filename)
+{
+    return parse_json_schema_and_register(handle, json_schema_filename, 
+                                          "Device.WiFi.DataElements.Network", "Network",
+                                          wfa_set_bus_callbackfunc_pointers);
+}
+
+int parse_native_dml_schema(bus_handle_t *handle, const char *json_schema_filename)
+{
+    // TODO depends on JSON format used for Native DM base_path may be "Device.WiFi"
+    return parse_json_schema_and_register(handle, json_schema_filename, 
+                                          NULL, NULL,
+                                          set_bus_callbackfunc_pointers);
 }

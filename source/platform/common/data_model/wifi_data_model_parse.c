@@ -26,7 +26,7 @@
 #include "wifi_data_model.h"
 #include "wifi_dml_api.h"
 
-int set_bus_callbackfunc_pointers(char *full_namespace, bus_callback_table_t *cb_table)
+int set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
 {
     bus_data_cb_func_t bus_data_cb[] = {
         //wifi event cb func

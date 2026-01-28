@@ -1182,7 +1182,16 @@ int start_dml_main(void *arg)
     ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
 
     decode_json_obj(&ctrl->handle, BUS_DML_CONFIG_FILE);
+    // TODO replace decode_json_obj with parse_native_dml_schema when JSON format is aligned
+    // /* Parse and register Native DM */
+    // wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing Native DM schema: %s\n", 
+    //                      __func__, __LINE__, BUS_DML_CONFIG_FILE);
+    // parse_native_dml_schema(&ctrl->handle, BUS_DML_CONFIG_FILE);
+
+    wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing WFA Data Elements schema: %s\n", 
+                         __func__, __LINE__, BUS_WFA_DML_CONFIG_FILE);
     parse_wfa_data_elements_schema(&ctrl->handle, BUS_WFA_DML_CONFIG_FILE);
+    
     print_registered_elems(get_bus_mux_reg_cb_map(), 0);
 
     get_wifidb_obj()->desc.init_data_fn();
