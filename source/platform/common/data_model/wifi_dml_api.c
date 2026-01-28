@@ -1182,6 +1182,7 @@ int start_dml_main(void *arg)
     ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
 
     decode_json_obj(&ctrl->handle, BUS_DML_CONFIG_FILE);
+    parse_wfa_data_elements_schema(&ctrl->handle, BUS_WFA_DML_CONFIG_FILE);
     print_registered_elems(get_bus_mux_reg_cb_map(), 0);
 
     get_wifidb_obj()->desc.init_data_fn();

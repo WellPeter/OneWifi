@@ -112,5 +112,6 @@ typedef struct bus_data_cb_func {
 } bus_data_cb_func_t;
 
 int decode_json_obj(bus_handle_t *handle, const char *json_name);
+int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema_filename);
 
 #endif //WIFI_DATA_MODEL_PARSE_H
