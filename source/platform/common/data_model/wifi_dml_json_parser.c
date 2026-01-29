@@ -125,6 +125,7 @@ static char* yang_to_tr181_path(const char* yang_path)
         if (temp) {
             free(result);
             result = temp;
+            wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Path conversion: %s -> %s\n", __func__, __LINE__, yang_path, result);
         }
     }
     
@@ -138,31 +139,32 @@ static cJSON* resolve_ref(cJSON* root, const char* ref_str)
     char* path_copy = NULL;
     cJSON* node = NULL;
     char* token = NULL;
-    
+
     if (!root || !ref_str || ref_str[0] != '#') {
         return NULL;
     }
-    
+
+    wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Resolving $ref: %s\n", __func__, __LINE__, ref_str);
     /* Skip "#/" prefix */
     path = ref_str;
     if (strncmp(path, "#/", 2) == 0) {
         path += 2;
     }
-    
+
     /* Make a mutable copy of the path */
     path_copy = strdup(path);
     if (!path_copy) {
         return NULL;
     }
-    
+
     node = root;
     token = strtok(path_copy, "/");
-    
+
     while (token != NULL && node != NULL) {
         node = cJSON_GetObjectItem(node, token);
         token = strtok(NULL, "/");
     }
-    
+
     free(path_copy);
     return node;
 }
@@ -188,9 +190,11 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
         resolved = resolve_ref(root, ref->valuestring);
         if (resolved) {
             return follow_ref_if_any(root, resolved);
+        } else {
+            wifi_util_info_print(WIFI_DMCLI, "%s:%d: Failed to resolve $ref: %s\n", __func__, __LINE__, ref->valuestring);
         }
     }
-    
+
     /* Unwrap oneOf / anyOf, skip null */
     comb = cJSON_GetObjectItem(node, "oneOf");
     if (!comb) {
@@ -198,6 +202,7 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
     }
     
     if (comb && cJSON_IsArray(comb)) {
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Following oneOf/anyOf combiner\n", __func__, __LINE__);
         it = comb->child;
         while (it) {
             type = cJSON_GetObjectItem(it, "type");
@@ -284,6 +289,8 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
             props->data_format = bus_data_type_int16;
         } else if (strcmp(type->valuestring, "int8_t") == 0) {
             props->data_format = bus_data_type_int8;
+        } else {
+            wifi_util_info_print(WIFI_DMCLI, "%s:%d: Unknown type: %s\n", __func__, __LINE__, type->valuestring);
         }
     }
 
@@ -292,6 +299,10 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
     if (str_enum && cJSON_IsArray(str_enum)) {
         props->num_of_str_validation = cJSON_GetArraySize(str_enum);
         props->str_validation = malloc(sizeof(char *) * props->num_of_str_validation);
+        if (props->str_validation == NULL) {
+            props->num_of_str_validation = 0;
+            return;
+        }
 
         for (uint32_t i = 0; i < props->num_of_str_validation; i++) {
             cJSON *item = cJSON_GetArrayItem(str_enum, i);
@@ -383,12 +394,14 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
     /* 2) If effective has properties -> expand (this handles $ref -> object with properties) */
     props_obj = cJSON_GetObjectItem(effective, "properties");
     if (props_obj && cJSON_IsObject(props_obj)) {
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Found object with properties at: %s\n", __func__, __LINE__, full_path);
         traverse_schema(root, effective, full_path, handle, callback_setter);
         return;
     }
 
     /* 3) If type is array -> register TABLE, and examine items, only if array type is object */
     if (schema_has_type(effective, "array")) {
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Found array type at: %s\n", __func__, __LINE__, full_path);
         /* now inspect items */
         items = cJSON_GetObjectItem(effective, "items");
         if (!items) {
@@ -410,6 +423,7 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
 
             tr181_path = yang_to_tr181_path(table_name);
             if (tr181_path) {
+                wifi_util_info_print(WIFI_DMCLI, "%s:%d: Registering table: %s\n", __func__, __LINE__, tr181_path);
                 callback_setter(tr181_path, &cb_table);
                 bus_register_namespace(handle, tr181_path, bus_element_type_table, cb_table, data_model_value, 1);
                 free(tr181_path);
@@ -419,6 +433,7 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
             traverse_schema(root, items_eff, table_name, handle, callback_setter);
         } else {
             /* primitive array -> register the row as property */
+            wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Found primitive array at: %s\n", __func__, __LINE__, full_path);
             memset(&data_model_value, 0, sizeof(data_model_value));
             parse_property_constraints(items_eff, &data_model_value);
 
@@ -442,6 +457,8 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
                     }
                     free(parent_path);
                 }
+                wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Registering property: %s (format=%d, permission=%d)\n", 
+                        __func__, __LINE__, tr181_path, data_model_value.data_format, data_model_value.data_permission);
                 bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
                 free(tr181_path);
             }
@@ -453,6 +470,7 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
        try to resolve any nested $ref and check again */
     if (schema_has_type(effective, "object")) {
         /* we've already tried follow_ref_if_any at top-level; if still no properties, treat as leaf object */
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Found leaf object at: %s\n", __func__, __LINE__, full_path);
         memset(&data_model_value, 0, sizeof(data_model_value));
         parse_property_constraints(effective, &data_model_value);
         data_model_value.data_format = bus_data_type_object;
@@ -477,6 +495,8 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
                 }
                 free(parent_path);
             }
+            wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Registering property: %s (format=%d, permission=%d)\n", 
+                        __func__, __LINE__, tr181_path, data_model_value.data_format, data_model_value.data_permission);
             bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
             free(tr181_path);
         }
@@ -494,7 +514,7 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
         char* last_dot = strrchr(parent_path, '.');
         if (last_dot) {
             *last_dot = '\0';  /* Truncate at last dot to get parent path */
-            
+
             /* Register callback for parent object */
             char* parent_tr181_path = yang_to_tr181_path(parent_path);
             if (parent_tr181_path) {
@@ -511,6 +531,8 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
     /* Register the property itself with full path */
     tr181_path = yang_to_tr181_path(full_path);
     if (tr181_path) {
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Registering property: %s (format=%d, permission=%d)\n", 
+                           __func__, __LINE__, tr181_path, data_model_value.data_format, data_model_value.data_permission);
         bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
         free(tr181_path);
     }
@@ -527,6 +549,8 @@ static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_pa
     if (!schema_node || !handle || !callback_setter) {
         return;
     }
+    
+    wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Traversing schema with base_path: %s\n", __func__, __LINE__, base_path ? base_path : "(null)");
 
     /* ensure we operate on resolved node (if schema_node is a wrapper with $ref) */
     effective = follow_ref_if_any(root, schema_node);
@@ -536,6 +560,7 @@ static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_pa
 
     props = cJSON_GetObjectItem(effective, "properties");
     if (!props || !cJSON_IsObject(props)) {
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: No properties found at: %s\n", __func__, __LINE__, base_path ? base_path : "(null)");
         return;
     }
 
@@ -551,6 +576,7 @@ static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_pa
                 snprintf(new_path, sizeof(new_path), "%s%s", base_path, child->string);
             }
 
+            wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Processing property: %s\n", __func__, __LINE__, new_path);
             /* pass the child's schema node (not child->child) because child is a property pair */
             handle_property_node(root, new_path, child, handle, callback_setter);
         }
@@ -572,8 +598,12 @@ static bool parse_and_register_schema_internal(bus_handle_t *handle, cJSON* root
     /* Find element matching search key */
     props = cJSON_GetObjectItem(root, "properties");
     if (!props) {
+        wifi_util_error_print(WIFI_DMCLI, "%s:%d: No properties found in schema root\n", __func__, __LINE__);
         return false;
     }
+    
+    wifi_util_info_print(WIFI_DMCLI, "%s:%d: Starting schema registration with base_path: %s, search_key: %s\n", 
+                        __func__, __LINE__, base_path ? base_path : "(null)", search_key ? search_key : "(all)");
     
     child = props->child;
     while (child) {
@@ -625,6 +655,8 @@ static bool parse_json_schema_file(bus_handle_t *handle, const char *filename, c
     read_bytes = fread(buf, 1, size, f);
     fclose(f);
     buf[read_bytes] = '\0';
+    
+    wifi_util_info_print(WIFI_DMCLI, "%s:%d: Loaded %zu bytes from %s\n", __func__, __LINE__, read_bytes, filename);
     
     root = cJSON_Parse(buf);
     free(buf);
