@@ -34,7 +34,6 @@ static cJSON* resolve_ref(cJSON* root, const char* ref_str);
 static cJSON* follow_ref_if_any(cJSON* root, cJSON* node);
 static bool schema_has_type(cJSON* schema, const char* want);
 static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props);
-static void parse_readwrite(cJSON* schema_node, data_model_properties_t* props);
 static void handle_property_node(cJSON* root, const char* full_path, cJSON* property_schema, bus_handle_t *handle, bus_callback_setter_fn callback_setter);
 static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_path, bus_handle_t *handle, bus_callback_setter_fn callback_setter);
 static char* yang_to_tr181_path(const char* yang_path);
@@ -231,51 +230,7 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
     return node;
 }
 
-/* Extract min/max range, type, read/write from leaf node */
-static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props)
-{
-    if (!schema_node || !props) {
-        return;
-    }
-    
-    /* min / max from JSON schema */
-    cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
-    cJSON* maximum = cJSON_GetObjectItem(schema_node, "maximum");
-    
-    if (minimum && cJSON_IsNumber(minimum)) {
-        props->min_data_range = minimum->valuedouble;
-    }
-    
-    if (maximum && cJSON_IsNumber(maximum)) {
-        props->max_data_range = maximum->valuedouble;
-    }
-
-    if (schema_has_type(schema_node, "string")  ) {
-        cJSON* str_enum = cJSON_GetObjectItem(schema_node, "enum");
-    
-        props->data_format = bus_data_type_string;
-
-        // TODO add pattern handler and validation
-        if (str_enum && cJSON_IsArray(str_enum)) {
-            props->num_of_str_validation = cJSON_GetArraySize(str_enum);
-            props->str_validation = malloc(sizeof(char *) * props->num_of_str_validation);
-
-            for (uint32_t i = 0; i < props->num_of_str_validation; i++) {
-                cJSON *item = cJSON_GetArrayItem(str_enum, i);
-                if (item != NULL && cJSON_IsString(item)) {
-                    props->str_validation[i] = malloc(strlen(item->valuestring) + 1);
-                    strncpy(props->str_validation[i], item->valuestring, strlen(item->valuestring) + 1);
-                }
-            }
-        }
-    } else if (schema_has_type(schema_node, "boolean") || schema_has_type(schema_node, "bool")) {
-        props->data_format = bus_data_type_boolean;
-    } else if (schema_has_type(schema_node, "integer")) {
-        props->data_format = bus_data_type_uint32;
-    }
-}
-
-static void parse_readwrite(cJSON* schema_node, data_model_properties_t* props)
+static void parse_property_readwrite(cJSON* schema_node, data_model_properties_t* props)
 {
     if (!schema_node || !props) {
         return;
@@ -287,6 +242,89 @@ static void parse_readwrite(cJSON* schema_node, data_model_properties_t* props)
     } else {
         props->data_permission = 0;
     }
+}
+
+static void parse_property_type(cJSON* schema_node, data_model_properties_t* props)
+{
+    if (!schema_node || !props) {
+        return;
+    }
+    
+    cJSON* type = cJSON_GetObjectItem(schema_node, "type");
+
+    if (type && cJSON_IsArray(type)) {
+        cJSON* it = type->child;
+        while (it) {
+            /* Find first non-null type */
+            if (cJSON_IsString(it) && strcmp(it->valuestring, "null") != 0) {
+                break;
+            }
+            it = it->next;
+        }
+        type = it;
+    }
+
+    if (type && cJSON_IsString(type)) {
+        if (strcmp(type->valuestring, "string") == 0) {
+            props->data_format = bus_data_type_string;
+        } else if (strcmp(type->valuestring, "boolean") == 0 ||
+                   strcmp(type->valuestring, "bool") == 0) {
+            props->data_format = bus_data_type_boolean;
+        } else if (strcmp(type->valuestring, "integer") == 0) {
+            props->data_format = bus_data_type_int32;
+        } else if (strcmp(type->valuestring, "uint32_t") == 0) {
+            props->data_format = bus_data_type_uint32;
+        } else if (strcmp(type->valuestring, "uint16_t") == 0) {
+            props->data_format = bus_data_type_uint16;
+        } else if (strcmp(type->valuestring, "uint8_t") == 0) {
+            props->data_format = bus_data_type_uint8;
+        } else if (strcmp(type->valuestring, "int32_t") == 0) {
+            props->data_format = bus_data_type_int32;
+        } else if (strcmp(type->valuestring, "int16_t") == 0) {
+            props->data_format = bus_data_type_int16;
+        } else if (strcmp(type->valuestring, "int8_t") == 0) {
+            props->data_format = bus_data_type_int8;
+        }
+    }
+
+    cJSON* str_enum = cJSON_GetObjectItem(schema_node, "enum");
+
+    if (str_enum && cJSON_IsArray(str_enum)) {
+        props->num_of_str_validation = cJSON_GetArraySize(str_enum);
+        props->str_validation = malloc(sizeof(char *) * props->num_of_str_validation);
+
+        for (uint32_t i = 0; i < props->num_of_str_validation; i++) {
+            cJSON *item = cJSON_GetArrayItem(str_enum, i);
+            if (item != NULL && cJSON_IsString(item)) {
+                props->str_validation[i] = malloc(strlen(item->valuestring) + 1);
+                strncpy(props->str_validation[i], item->valuestring, strlen(item->valuestring) + 1);
+            }
+        }
+    }
+}
+
+/* Extract min/max range, type, enum, read/write from leaf node */
+/* Expecting to enter after following all $ref / combiners */
+static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props)
+{
+    if (!schema_node || !props) {
+        return;
+    }
+
+    /* min / max from JSON schema */
+    cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
+    cJSON* maximum = cJSON_GetObjectItem(schema_node, "maximum");
+
+    if (minimum && cJSON_IsNumber(minimum)) {
+        props->min_data_range = minimum->valuedouble;
+    }
+
+    if (maximum && cJSON_IsNumber(maximum)) {
+        props->max_data_range = maximum->valuedouble;
+    }
+
+    parse_property_readwrite(schema_node, props);
+    parse_property_type(schema_node, props);
 }
 
 static bool schema_has_type(cJSON* schema, const char* want)
@@ -368,9 +406,8 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
 
             /* reset and fill constraints for the array property itself */
             memset(&data_model_value, 0, sizeof(data_model_value));
-            parse_property_constraints(effective, &data_model_value);
-            parse_readwrite(effective, &data_model_value);
-            
+            parse_property_constraints(effective, &data_model_value); // TODO maybe need only writable
+
             tr181_path = yang_to_tr181_path(table_name);
             if (tr181_path) {
                 callback_setter(tr181_path, &cb_table);
@@ -384,11 +421,27 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
             /* primitive array -> register the row as property */
             memset(&data_model_value, 0, sizeof(data_model_value));
             parse_property_constraints(items_eff, &data_model_value);
-            parse_readwrite(items_eff, &data_model_value);
 
             tr181_path = yang_to_tr181_path(full_path);
             if (tr181_path) {
-                callback_setter(tr181_path, &cb_table);
+                char* parent_path = strdup(full_path);
+                if (parent_path) {
+                    char* last_dot = strrchr(parent_path, '.');
+                    if (last_dot) {
+                        *last_dot = '\0';  /* Truncate at last dot to get parent path */
+                        
+                        /* Register callback for parent object */
+                        char* parent_tr181_path = yang_to_tr181_path(parent_path);
+                        if (parent_tr181_path) {
+                            callback_setter(parent_tr181_path, &cb_table);
+                            /* Set NULL table handlers for primitive property callbacks */
+                            cb_table.table_remove_row_handler = NULL;
+                            cb_table.table_add_row_handler = NULL;
+                            free(parent_tr181_path);
+                        }
+                    }
+                    free(parent_path);
+                }
                 bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
                 free(tr181_path);
             }
@@ -402,12 +455,28 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
         /* we've already tried follow_ref_if_any at top-level; if still no properties, treat as leaf object */
         memset(&data_model_value, 0, sizeof(data_model_value));
         parse_property_constraints(effective, &data_model_value);
-        parse_readwrite(effective, &data_model_value);
         data_model_value.data_format = bus_data_type_object;
 
         tr181_path = yang_to_tr181_path(full_path);
         if (tr181_path) {
-            callback_setter(tr181_path, &cb_table);
+            char* parent_path = strdup(full_path);
+            if (parent_path) {
+                char* last_dot = strrchr(parent_path, '.');
+                if (last_dot) {
+                    *last_dot = '\0';  /* Truncate at last dot to get parent path */
+                    
+                    /* Register callback for parent object */
+                    char* parent_tr181_path = yang_to_tr181_path(parent_path);
+                    if (parent_tr181_path) {
+                        callback_setter(parent_tr181_path, &cb_table);
+                        /* Set NULL table handlers for primitive property callbacks */
+                        cb_table.table_remove_row_handler = NULL;
+                        cb_table.table_add_row_handler = NULL;
+                        free(parent_tr181_path);
+                    }
+                }
+                free(parent_path);
+            }
             bus_register_namespace(handle, tr181_path, bus_element_type_property, cb_table, data_model_value, 1);
             free(tr181_path);
         }
@@ -418,7 +487,6 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
     /* For primitive properties, register callback for the parent object, but keep full property path */
     memset(&data_model_value, 0, sizeof(data_model_value));
     parse_property_constraints(effective, &data_model_value);
-    parse_readwrite(effective, &data_model_value);
 
     /* Extract parent object path by removing the last component for callback registration */
     char* parent_path = strdup(full_path);

@@ -28,6 +28,7 @@
 #include "wifi_monitor.h"
 #include "wifi_mgr.h"
 #include "dml_onewifi_api.h"
+#include "wfa/wfa_data_model.h"
 
 wifi_dml_data_model_t g_dml_data_model;
 
@@ -47,11 +48,11 @@ bus_error_t wifi_elem_num_of_table_row(char *event_name, uint32_t *table_row_siz
     } else if (!strncmp(event_name, SSID_OBJ_TREE_NAME, strlen(SSID_OBJ_TREE_NAME) + 1)) {
         wifi_util_dbg_print(WIFI_DMCLI,"%s:%d: Total number of vaps:%d get total num vap dml:%d\n",__func__, __LINE__, getNumberRadios() * MAX_NUM_VAP_PER_RADIO, getTotalNumberVAPs());
         *table_row_size = getTotalNumberVAPs();
-    } else if (strstr(event_name, "Device.WiFi.DataElements.Network") != NULL) {
+    } else if (strstr(event_name, DE_DEVICE_TABLE) != NULL) {
         /* WFA Data Elements tables - use default stub values 
             TODO Add proper handling */
         wifi_util_dbg_print(WIFI_DMCLI,"%s:%d: WFA DataElements table [%s], using default size\n", __func__, __LINE__, event_name);
-        *table_row_size = 0;
+        *table_row_size = 1;
     } else {
         wifi_util_error_print(WIFI_DMCLI,"%s:%d Table is not found for [%s]\n", __func__, __LINE__, event_name);
         return bus_error_invalid_input;
