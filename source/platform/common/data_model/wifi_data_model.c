@@ -1705,6 +1705,7 @@ bus_error_t default_set_param_value(char *event_name, raw_data_t *p_data, struct
 
 bus_error_t default_table_add_row_handler(char const* tableName, char const* aliasName, uint32_t* instNum)
 {
+    // TODO what is the instNum here?
     (void)instNum;
     (void)aliasName;
     wifi_util_dbg_print(WIFI_DMCLI,"%s:%d enter\r\n", __func__, __LINE__);

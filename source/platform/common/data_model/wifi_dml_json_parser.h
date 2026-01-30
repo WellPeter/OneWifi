@@ -24,7 +24,7 @@
 #include "cJSON.h"
 
 /* Callback function pointer type for setting bus callbacks */
-typedef int (*bus_callback_setter_fn)(const char *full_namespace, bus_callback_table_t *cb_table);
+typedef int (*bus_cb_setter_fn)(const char *full_namespace, bus_callback_table_t *cb_table);
 
 /**
  * @brief Common API to parse JSON schema file and register with bus callbacks
@@ -42,7 +42,7 @@ typedef int (*bus_callback_setter_fn)(const char *full_namespace, bus_callback_t
  */
 int parse_json_schema_and_register(bus_handle_t *handle, const char *json_schema_filename, 
                                    const char *base_path, const char *search_key,
-                                   bus_callback_setter_fn callback_setter);
+                                   bus_cb_setter_fn callback_setter);
 
 /**
  * @brief Parse and register WFA Data Elements JSON schema

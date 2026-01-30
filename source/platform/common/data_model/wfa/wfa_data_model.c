@@ -77,40 +77,49 @@ bus_error_t de_device_table_remove_row_handler(char const* rowName)
     return bus_error_success;
 }
 
+// TODO: Make the common function for wifi and wfa data model with responsive cb func pointers
 /* WFA DataElements callback function pointer mapping */
 int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
 {
-    bus_data_cb_func_t bus_data_cb[] = {
+    static const bus_data_cb_func_t bus_data_cb[] = {
+        /* TR-181 Path
+            get                             set
+            add_row                         rm_row
+            event_sub                       method */
+
         /* Device.WiFi.DataElements.Network */
-        { DATAELEMS_NETWORK_OBJ,
-            { wfa_network_get, NULL, NULL,
-              NULL, default_event_sub_handler, NULL } },
-        { DE_DEVICE_TABLE,
-            { default_get_param_value, default_set_param_value, de_device_table_add_row_handler,
-              de_device_table_remove_row_handler, default_event_sub_handler, NULL } },
+        { DATAELEMS_NETWORK_OBJ, {
+            wfa_network_get,                 NULL,
+            NULL,                            NULL,
+            default_event_sub_handler,       NULL }
+        },
+
+        /* Device.WiFi.DataElements.Network.Device.{i} */
+        { DE_DEVICE_TABLE, {
+            default_get_param_value,         default_set_param_value,
+            de_device_table_add_row_handler, de_device_table_remove_row_handler,
+            default_event_sub_handler,       NULL }
+        },
     };
 
     /* For now, use default handlers */
-    bus_data_cb_func_t bus_default_data_cb = { " ",
-        { default_get_param_value, default_set_param_value, default_table_add_row_handler,
-          default_table_remove_row_handler, default_event_sub_handler, NULL }
+    bus_callback_table_t bus_default_cb = {
+        default_get_param_value, default_set_param_value, default_table_add_row_handler,
+        default_table_remove_row_handler, default_event_sub_handler, NULL
     };
 
     uint32_t index = 0;
-    bool     table_found = false;
 
     for (index = 0; index < (uint32_t)ARRAY_SZ(bus_data_cb); index++) {
         if (STR_CMP(full_namespace, bus_data_cb[index].cb_table_name)) {
             memcpy(cb_table, &bus_data_cb[index].cb_func, sizeof(bus_callback_table_t));
-            table_found = true;
-            break;
+            return RETURN_OK;
         }
     }
 
-    if (table_found == false) {
-        wifi_util_info_print(WIFI_DMCLI,"%s:%d:default cb set for namespace:[%s]\n", __func__, __LINE__, full_namespace);
-        memcpy(cb_table, &bus_default_data_cb.cb_func, sizeof(bus_callback_table_t));
-    }
+    /* No match found, use default handlers */
+    wifi_util_info_print(WIFI_DMCLI,"%s:%d:default cb set for namespace:[%s]\n", __func__, __LINE__, full_namespace);
+    memcpy(cb_table, &bus_default_cb, sizeof(bus_callback_table_t));
 
     return RETURN_OK;
 }
