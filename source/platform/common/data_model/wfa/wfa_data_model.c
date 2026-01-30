@@ -28,6 +28,13 @@
 #include "wfa_dml_cb.h"
 #include "wifi_ctrl.h"
 
+wfa_dml_data_model_t g_wfa_dml_data_model;
+
+wfa_dml_data_model_t *get_wfa_dml_data_model_param(void)
+{
+    return &g_wfa_dml_data_model;
+}
+
 static bus_error_t wfa_network_get(char *event_name, raw_data_t *p_data,struct bus_user_data * user_data )
 {
     char     extension[64]    = {0};
@@ -49,6 +56,27 @@ static bus_error_t wfa_network_get(char *event_name, raw_data_t *p_data,struct b
     return status;
 }
 
+bus_error_t de_device_table_add_row_handler(char const* tableName, char const* aliasName, uint32_t* instNum)
+{
+    (void)instNum;
+    (void)aliasName;
+    wfa_dml_data_model_t *p_dml_param = get_wfa_dml_data_model_param();
+    wifi_util_dbg_print(WIFI_DMCLI,"%s:%d enter\r\n", __func__, __LINE__);
+    p_dml_param->table_de_device_index++;
+    *instNum = p_dml_param->table_de_device_index;
+    wifi_util_dbg_print(WIFI_DMCLI,"%s:%d Added table:%s table_de_device_index:%d-%d\r\n", __func__,
+        __LINE__, tableName, p_dml_param->table_de_device_index, *instNum);
+    return bus_error_success;
+}
+
+bus_error_t de_device_table_remove_row_handler(char const* rowName)
+{
+    wfa_dml_data_model_t *p_dml_param = get_wfa_dml_data_model_param();
+    wifi_util_dbg_print(WIFI_DMCLI,"%s:%d enter:%s\r\n", __func__, __LINE__, rowName);
+    p_dml_param->table_de_device_index--;
+    return bus_error_success;
+}
+
 /* WFA DataElements callback function pointer mapping */
 int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
 {
@@ -57,6 +85,9 @@ int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_t
         { DATAELEMS_NETWORK_OBJ,
             { wfa_network_get, NULL, NULL,
               NULL, default_event_sub_handler, NULL } },
+        { DE_DEVICE_TABLE,
+            { default_get_param_value, default_set_param_value, de_device_table_add_row_handler,
+              de_device_table_remove_row_handler, default_event_sub_handler, NULL } },
     };
 
     /* For now, use default handlers */

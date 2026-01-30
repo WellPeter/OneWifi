@@ -403,6 +403,16 @@ static const struct yang_to_tr181_map g_yang_map[] = {
 #define DE_BSTACFG_STR          DE_BSTAMLD_CONFIG       "STREnabled"
 #define DE_BSTACFG_NSTR         DE_BSTAMLD_CONFIG       "NSTREnabled"
 
+typedef struct wfa_dml_data_model {
+    uint32_t table_de_device_index;
+    uint32_t table_de_radio_index;
+    uint32_t table_de_bss_index;
+    uint32_t table_de_sta_index;
+    uint32_t table_de_ssid_index;
+    uint32_t table_de_apmld_index;
+    uint32_t table_de_stamld_index;
+} wfa_dml_data_model_t;
+
 /**
  * @brief Set bus callback function pointers for WFA Data Elements
  * 

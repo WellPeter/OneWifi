@@ -1679,8 +1679,20 @@ bus_error_t wifi_region_code_set_param_value(char *event_name, raw_data_t *p_dat
 
 bus_error_t default_get_param_value(char *event_name, raw_data_t *p_data, struct bus_user_data * user_data )
 {
-    (void)p_data;
-    wifi_util_dbg_print(WIFI_DMCLI,"%s:%d enter:%s\r\n", __func__, __LINE__, event_name);
+    wifi_util_dbg_print(WIFI_DMCLI,"%s:%d enter:%s, data type:%d\r\n", __func__, __LINE__, event_name, p_data->data_type);
+
+    switch(p_data->data_type) {
+        case bus_data_type_string:
+            scratch_data_buff_t temp_buff = { 0 };
+            set_output_string(&temp_buff, " ");
+
+            p_data->raw_data.bytes = temp_buff.buff;
+            p_data->raw_data_len   = temp_buff.buff_len;
+            break;
+        default:
+            break;
+    }
+
     return bus_error_success;
 }
 
