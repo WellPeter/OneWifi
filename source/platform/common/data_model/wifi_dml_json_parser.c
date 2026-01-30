@@ -425,6 +425,8 @@ static void handle_property_node(cJSON* root, const char* full_path, cJSON* prop
             if (tr181_path) {
                 wifi_util_info_print(WIFI_DMCLI, "%s:%d: Registering table: %s\n", __func__, __LINE__, tr181_path);
                 callback_setter(tr181_path, &cb_table);
+                cb_table.get_handler = NULL;
+                cb_table.set_handler = NULL;
                 bus_register_namespace(handle, tr181_path, bus_element_type_table, cb_table, data_model_value, 1);
                 free(tr181_path);
             }
