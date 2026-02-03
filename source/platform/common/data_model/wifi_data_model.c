@@ -48,11 +48,6 @@ bus_error_t wifi_elem_num_of_table_row(char *event_name, uint32_t *table_row_siz
     } else if (!strncmp(event_name, SSID_OBJ_TREE_NAME, strlen(SSID_OBJ_TREE_NAME) + 1)) {
         wifi_util_dbg_print(WIFI_DMCLI,"%s:%d: Total number of vaps:%d get total num vap dml:%d\n",__func__, __LINE__, getNumberRadios() * MAX_NUM_VAP_PER_RADIO, getTotalNumberVAPs());
         *table_row_size = getTotalNumberVAPs();
-    } else if (strstr(event_name, DE_DEVICE_TABLE) != NULL) {
-        /* WFA Data Elements tables - use default stub values 
-            TODO Add proper handling */
-        wifi_util_dbg_print(WIFI_DMCLI,"%s:%d: WFA DataElements table [%s], using default size\n", __func__, __LINE__, event_name);
-        *table_row_size = 1;
     } else {
         wifi_util_error_print(WIFI_DMCLI,"%s:%d Table is not found for [%s]\n", __func__, __LINE__, event_name);
         return bus_error_invalid_input;
@@ -1705,7 +1700,6 @@ bus_error_t default_set_param_value(char *event_name, raw_data_t *p_data, struct
 
 bus_error_t default_table_add_row_handler(char const* tableName, char const* aliasName, uint32_t* instNum)
 {
-    // TODO what is the instNum here?
     (void)instNum;
     (void)aliasName;
     wifi_util_dbg_print(WIFI_DMCLI,"%s:%d enter\r\n", __func__, __LINE__);

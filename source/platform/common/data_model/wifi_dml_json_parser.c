@@ -498,12 +498,16 @@ static bool parse_and_register_schema_internal(bus_handle_t *handle, cJSON* root
     }
 
     wifi_util_info_print(WIFI_DMCLI, "%s:%d: Starting schema registration with base_path: %s, search_key: %s\n", 
-                        __func__, __LINE__, base_path ? base_path : "(null)", search_key ? search_key : "(all)");
+                        __func__, __LINE__, base_path ? base_path : "(null)", search_key ? search_key : "(null)");
 
     child = props->child;
     while (child) {
+        // TODO Refactor to avoid code duplication with traverse_schema
+        if (base_path == NULL) {
+            base_path = child->string;
+        }
         /* If search_key is NULL, process all children, otherwise find matching child */
-        if (!search_key || (child->string && strstr(child->string, search_key) != NULL)) {
+        if (search_key == NULL || (child->string && strstr(child->string, search_key) != NULL)) {
             traverse_schema(root, child, base_path, handle, cb_setter);
             if (search_key) {
                 break;
@@ -598,7 +602,7 @@ int parse_json_schema_and_register(bus_handle_t *handle, const char *json_schema
 int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema_filename)
 {
     return parse_json_schema_and_register(handle, json_schema_filename, 
-                                          "Device.WiFi.DataElements.Network", "Network",
+                                          "Device.WiFi.DataElements.Network", "wfa-dataelements:Network",
                                           wfa_set_bus_callbackfunc_pointers);
 }
 

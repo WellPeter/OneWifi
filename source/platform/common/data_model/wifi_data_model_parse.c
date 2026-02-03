@@ -25,6 +25,8 @@
 #include "wifi_data_model_parse.h"
 #include "wifi_data_model.h"
 #include "wifi_dml_api.h"
+// TODO remove
+#include "wfa/wfa_data_model.h"
 
 int set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
 {
@@ -183,6 +185,8 @@ int bus_register_namespace(bus_handle_t *handle, char *full_namespace, bus_eleme
         //@TODO Add get handler to get table size.
         uint32_t num_of_table_rows;
         if (wifi_elem_num_of_table_row(full_namespace, &num_of_table_rows) == bus_error_success) {
+            dataElements.num_of_table_row = num_of_table_rows;
+        } else if (wfa_elem_num_of_table_row(full_namespace, &num_of_table_rows) == bus_error_success) {
             dataElements.num_of_table_row = num_of_table_rows;
         } else {
             dataElements.num_of_table_row = num_of_rows;

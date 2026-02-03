@@ -35,6 +35,20 @@ wfa_dml_data_model_t *get_wfa_dml_data_model_param(void)
     return &g_wfa_dml_data_model;
 }
 
+bus_error_t wfa_elem_num_of_table_row(char *event_name, uint32_t *table_row_size)
+{
+    if (!strncmp(event_name, DE_DEVICE_TABLE, strlen(DE_DEVICE_TABLE) + 1)) {
+        /* WFA Data Elements tables - use default stub values 
+            TODO Add proper handling */
+        wifi_util_dbg_print(WIFI_DMCLI,"%s:%d: WFA DataElements table [%s], using default size\n", __func__, __LINE__, event_name);
+        *table_row_size = 1;
+    } else {
+        wifi_util_error_print(WIFI_DMCLI,"%s:%d Table is not found for [%s]\n", __func__, __LINE__, event_name);
+        return bus_error_invalid_input;
+    }
+    return bus_error_success;
+}
+
 static bus_error_t wfa_network_get(char *event_name, raw_data_t *p_data,struct bus_user_data * user_data )
 {
     char     extension[64]    = {0};
