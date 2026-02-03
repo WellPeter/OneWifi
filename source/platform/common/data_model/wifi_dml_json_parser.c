@@ -219,7 +219,14 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
                    strcmp(type->valuestring, "bool") == 0) {
             props->data_format = bus_data_type_boolean;
         } else if (strcmp(type->valuestring, "integer") == 0) {
-            props->data_format = bus_data_type_int32;
+            // Integer types with minimun greater than or equal to 0 are unsigned
+            cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
+
+            if (minimum && cJSON_IsNumber(minimum) && minimum->valuedouble >= 0) {
+                props->data_format = bus_data_type_uint32;
+            } else {
+                props->data_format = bus_data_type_int32;
+            }
         } else if (strcmp(type->valuestring, "uint32_t") == 0) {
             props->data_format = bus_data_type_uint32;
         } else if (strcmp(type->valuestring, "uint16_t") == 0) {
