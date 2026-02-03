@@ -192,12 +192,17 @@ static void parse_property_readwrite(cJSON* schema_node, data_model_properties_t
     }
 }
 
+
+/* Type string values MUST be one of the six primitive types
+("null", "boolean", "object", "array", "number", or "string"),
+or "integer" which matches any number with a zero fractional part. 
+https://json-schema.org/draft/2020-12/json-schema-validation */
 static void parse_property_type(cJSON* schema_node, data_model_properties_t* props)
 {
     if (!schema_node || !props) {
         return;
     }
-    
+
     cJSON* type = cJSON_GetObjectItem(schema_node, "type");
 
     if (type && cJSON_IsArray(type)) {
@@ -215,8 +220,7 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
     if (type && cJSON_IsString(type)) {
         if (strcmp(type->valuestring, "string") == 0) {
             props->data_format = bus_data_type_string;
-        } else if (strcmp(type->valuestring, "boolean") == 0 ||
-                   strcmp(type->valuestring, "bool") == 0) {
+        } else if (strcmp(type->valuestring, "boolean") == 0) {
             props->data_format = bus_data_type_boolean;
         } else if (strcmp(type->valuestring, "integer") == 0) {
             // Integer types with minimun greater than or equal to 0 are unsigned
@@ -227,18 +231,6 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
             } else {
                 props->data_format = bus_data_type_int32;
             }
-        } else if (strcmp(type->valuestring, "uint32_t") == 0) {
-            props->data_format = bus_data_type_uint32;
-        } else if (strcmp(type->valuestring, "uint16_t") == 0) {
-            props->data_format = bus_data_type_uint16;
-        } else if (strcmp(type->valuestring, "uint8_t") == 0) {
-            props->data_format = bus_data_type_uint8;
-        } else if (strcmp(type->valuestring, "int32_t") == 0) {
-            props->data_format = bus_data_type_int32;
-        } else if (strcmp(type->valuestring, "int16_t") == 0) {
-            props->data_format = bus_data_type_int16;
-        } else if (strcmp(type->valuestring, "int8_t") == 0) {
-            props->data_format = bus_data_type_int8;
         } else if (strcmp(type->valuestring, "object") == 0) {
             props->data_format = bus_data_type_object;
         } else {
