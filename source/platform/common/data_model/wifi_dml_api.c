@@ -1186,8 +1186,8 @@ int start_dml_main(void *arg)
     /* Parse and register Native DM */
     wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing Native DM schema: %s\n", 
                          __func__, __LINE__, BUS_DML_CONFIG_FILE);
-    parse_native_dml_schema(&ctrl->handle, "bus_dml_config_converted.json");
-    // parse_native_dml_schema(&ctrl->handle, BUS_DML_CONFIG_FILE);
+    // parse_native_dml_schema(&ctrl->handle, "bus_dml_config_converted.json");
+    parse_native_dml_schema(&ctrl->handle, BUS_DML_CONFIG_FILE);
 
     wifi_util_info_print(WIFI_DMCLI, "%s:%d: Parsing WFA Data Elements schema: %s\n", 
                          __func__, __LINE__, BUS_WFA_DML_CONFIG_FILE);

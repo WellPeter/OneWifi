@@ -111,11 +111,37 @@ static cJSON* resolve_ref(cJSON* root, const char* ref_str)
     return node;
 }
 
+/* Merge ref_node properties into base object using references */
+static cJSON* merge_with_references(cJSON* base, cJSON* ref_node)
+{
+    cJSON* child = NULL;
+    
+    if (!ref_node) {
+        return base;
+    }
+    
+    if (!base) {
+        return ref_node;
+    }
+    
+    /* Add references from ref_node to base */
+    child = ref_node->child;
+    while (child) {
+        if (!cJSON_GetObjectItem(base, child->string)) {
+            cJSON_AddItemReferenceToObject(base, child->string, child);
+        }
+        child = child->next;
+    }
+    
+    return base;
+}
+
 /* Resolve $ref if present on the node; otherwise return the node itself */
 static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
 {
     cJSON* ref = NULL;
     cJSON* resolved = NULL;
+    cJSON* resolved_ref = NULL;
     cJSON* comb = NULL;
     cJSON* it = NULL;
     cJSON* type = NULL;
@@ -126,12 +152,21 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
         return NULL;
     }
     
-    /* Resolve $ref */
+    /* Resolve $ref and merge with current node */
     ref = cJSON_GetObjectItem(node, "$ref");
     if (ref && cJSON_IsString(ref)) {
         resolved = resolve_ref(root, ref->valuestring);
         if (resolved) {
-            return follow_ref_if_any(root, resolved);
+            /* Recursively follow refs in the resolved object */
+            resolved_ref = follow_ref_if_any(root, resolved);
+            if (resolved_ref) {
+                wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Merging $ref %s into parent node %s. \n", __func__, __LINE__, ref->valuestring, node->string);
+                /* Remove $ref from node */
+                cJSON_DeleteItemFromObject(node, "$ref");
+                /* Merge resolved properties into current node (node properties take precedence) */
+                merge_with_references(node, resolved_ref);
+                return node;
+            }
         } else {
             wifi_util_info_print(WIFI_DMCLI, "%s:%d: Failed to resolve $ref: %s\n", __func__, __LINE__, ref->valuestring);
         }
@@ -223,7 +258,7 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
         } else if (strcmp(type->valuestring, "boolean") == 0) {
             props->data_format = bus_data_type_boolean;
         } else if (strcmp(type->valuestring, "integer") == 0) {
-            // Integer types with minimun greater than or equal to 0 are unsigned
+            // Integer types with minimum greater than or equal to 0 are unsigned
             cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
 
             if (minimum && cJSON_IsNumber(minimum) && minimum->valuedouble >= 0) {
@@ -231,6 +266,8 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
             } else {
                 props->data_format = bus_data_type_int32;
             }
+        } else if (strcmp(type->valuestring, "number") == 0) {
+            props->data_format = bus_data_type_double;
         } else if (strcmp(type->valuestring, "object") == 0) {
             props->data_format = bus_data_type_object;
         } else {
@@ -321,6 +358,7 @@ static void find_parent_object_callback(const char* tr181_path, bus_cb_setter_fn
     if (last_dot) {
         *last_dot = '\0';
         cb_setter(parent_path, cb_table);
+        /* Property should not have table row handlers */
         cb_table->table_remove_row_handler = NULL;
         cb_table->table_add_row_handler = NULL;
     }
