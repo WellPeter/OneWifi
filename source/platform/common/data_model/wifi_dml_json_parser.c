@@ -136,17 +136,40 @@ static cJSON* merge_with_references(cJSON* base, cJSON* ref_node)
     return base;
 }
 
+/* Check if a variant is null-only */
+static bool is_null_only_variant(cJSON* variant)
+{
+    cJSON* type = cJSON_GetObjectItem(variant, "type");
+    
+    if (!type) {
+        return false;
+    }
+    
+    if (cJSON_IsString(type)) {
+        return strcmp(type->valuestring, "null") == 0;
+    }
+    
+    if (cJSON_IsArray(type)) {
+        cJSON* t = type->child;
+        while (t) {
+            if (cJSON_IsString(t) && strcmp(t->valuestring, "null") != 0) {
+                return false;
+            }
+            t = t->next;
+        }
+        return true;
+    }
+    
+    return false;
+}
+
 /* Resolve $ref if present on the node; otherwise return the node itself */
 static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
 {
     cJSON* ref = NULL;
     cJSON* resolved = NULL;
-    cJSON* resolved_ref = NULL;
     cJSON* comb = NULL;
     cJSON* it = NULL;
-    cJSON* type = NULL;
-    bool only_null = false;
-    cJSON* t = NULL;
     
     if (!node) {
         return NULL;
@@ -158,57 +181,64 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
         resolved = resolve_ref(root, ref->valuestring);
         if (resolved) {
             /* Recursively follow refs in the resolved object */
-            resolved_ref = follow_ref_if_any(root, resolved);
-            if (resolved_ref) {
-                wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Merging $ref %s into parent node %s. \n", __func__, __LINE__, ref->valuestring, node->string);
-                /* Remove $ref from node */
+            resolved = follow_ref_if_any(root, resolved);
+            if (resolved) {
+                wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Merging $ref %s into parent node\n", 
+                                   __func__, __LINE__, ref->valuestring);
                 cJSON_DeleteItemFromObject(node, "$ref");
-                /* Merge resolved properties into current node (node properties take precedence) */
-                merge_with_references(node, resolved_ref);
+                merge_with_references(node, resolved);
                 return node;
             }
         } else {
-            wifi_util_info_print(WIFI_DMCLI, "%s:%d: Failed to resolve $ref: %s\n", __func__, __LINE__, ref->valuestring);
+            wifi_util_info_print(WIFI_DMCLI, "%s:%d: Failed to resolve $ref: %s\n", 
+                                __func__, __LINE__, ref->valuestring);
         }
     }
 
-    /* Unwrap oneOf / anyOf, skip null */
+    /* Process oneOf/anyOf: merge all non-null variants */
     comb = cJSON_GetObjectItem(node, "oneOf");
     if (!comb) {
         comb = cJSON_GetObjectItem(node, "anyOf");
     }
     
     if (comb && cJSON_IsArray(comb)) {
-        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Following oneOf/anyOf combiner\n", __func__, __LINE__);
+        wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Processing oneOf/anyOf with %d variants\n", 
+                           __func__, __LINE__, cJSON_GetArraySize(comb));
+        
+        /* Process each variant - must complete iteration before deleting comb */
         it = comb->child;
         while (it) {
-            type = cJSON_GetObjectItem(it, "type");
+            cJSON* next_it = it->next;  /* Save next pointer before any modifications */
             
             /* Skip null-only variants */
-            if (type) {
-                if (cJSON_IsString(type) && strcmp(type->valuestring, "null") == 0) {
-                    it = it->next;
-                    continue;
-                }
-                if (cJSON_IsArray(type)) {
-                    only_null = true;
-                    t = type->child;
-                    while (t) {
-                        if (cJSON_IsString(t) && strcmp(t->valuestring, "null") != 0) {
-                            only_null = false;
-                            break;
+            if (!is_null_only_variant(it)) {
+                /* Resolve $ref if present in variant */
+                cJSON* variant_ref = cJSON_GetObjectItem(it, "$ref");
+                
+                if (variant_ref && cJSON_IsString(variant_ref)) {
+                    cJSON* ref_target = resolve_ref(root, variant_ref->valuestring);
+                    if (ref_target) {
+                        cJSON* variant_resolved = follow_ref_if_any(root, ref_target);
+                        if (variant_resolved) {
+                            wifi_util_dbg_print(WIFI_DMCLI, "%s:%d: Merging variant $ref %s\n", 
+                                              __func__, __LINE__, variant_ref->valuestring);
+                            merge_with_references(node, variant_resolved);
                         }
-                        t = t->next;
                     }
-                    if (only_null) {
-                        it = it->next;
-                        continue;
-                    }
+                } else {
+                    /* Inline variant - merge directly */
+                    merge_with_references(node, it);
                 }
             }
-            return follow_ref_if_any(root, it);
+            it = next_it;  /* Use saved pointer for next iteration */
         }
+        
+        /* NOTE: We do NOT delete oneOf/anyOf here because we've added references to their
+         * child nodes. Deleting them would free the children, making our references invalid.
+         * The oneOf/anyOf nodes remain in the tree but are effectively ignored during
+         * subsequent processing since we've merged all their properties into the parent node. */
     }
+    
     return node;
 }
 
@@ -270,9 +300,40 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
             props->data_format = bus_data_type_double;
         } else if (strcmp(type->valuestring, "object") == 0) {
             props->data_format = bus_data_type_object;
+        } else if (strcmp(type->valuestring, "array") == 0) {
+            props->data_format = bus_data_type_none;
         } else {
             wifi_util_info_print(WIFI_DMCLI, "%s:%d: Unknown type: %s\n", __func__, __LINE__, type->valuestring);
         }
+    }
+}
+
+/* Extract min/max range, type, enum, read/write from leaf node */
+/* Expecting to enter after following all $ref / combiners */
+static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props)
+{
+    if (!schema_node || !props) {
+        return;
+    }
+
+    parse_property_type(schema_node, props);
+    parse_property_readwrite(schema_node, props);
+
+    if (props->data_permission == 0) {
+        /* Skip set validation parameters for read-only properties */
+        return;
+    } 
+
+    /* min / max from JSON schema */
+    cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
+    cJSON* maximum = cJSON_GetObjectItem(schema_node, "maximum");
+
+    if (minimum && cJSON_IsNumber(minimum)) {
+        props->min_data_range = minimum->valuedouble;
+    }
+
+    if (maximum && cJSON_IsNumber(maximum)) {
+        props->max_data_range = maximum->valuedouble;
     }
 
     cJSON* str_enum = cJSON_GetObjectItem(schema_node, "enum");
@@ -293,30 +354,6 @@ static void parse_property_type(cJSON* schema_node, data_model_properties_t* pro
             }
         }
     }
-}
-
-/* Extract min/max range, type, enum, read/write from leaf node */
-/* Expecting to enter after following all $ref / combiners */
-static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props)
-{
-    if (!schema_node || !props) {
-        return;
-    }
-
-    /* min / max from JSON schema */
-    cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
-    cJSON* maximum = cJSON_GetObjectItem(schema_node, "maximum");
-
-    if (minimum && cJSON_IsNumber(minimum)) {
-        props->min_data_range = minimum->valuedouble;
-    }
-
-    if (maximum && cJSON_IsNumber(maximum)) {
-        props->max_data_range = maximum->valuedouble;
-    }
-
-    parse_property_readwrite(schema_node, props);
-    parse_property_type(schema_node, props);
 }
 
 static bool schema_has_type(cJSON* schema, const char* want)
@@ -370,11 +407,8 @@ static void register_leaf_property(cJSON* schema_node, const char* tr181_path,
                                    bus_handle_t *handle,
                                    bus_cb_setter_fn cb_setter)
 {
-    bus_callback_table_t cb_table;
-    data_model_properties_t data_model_value;
-
-    memset(&cb_table, 0, sizeof(cb_table));
-    memset(&data_model_value, 0, sizeof(data_model_value));
+    bus_callback_table_t cb_table = { 0 };
+    data_model_properties_t data_model_value = { 0 };
 
     parse_property_constraints(schema_node, &data_model_value);
 
@@ -393,8 +427,8 @@ static void register_leaf_property(cJSON* schema_node, const char* tr181_path,
 /* Handle ANY property under an object: decide if TABLE or PROPERTY */
 static void handle_property_node(cJSON* root, const char* tr181_path, cJSON* property_schema, bus_handle_t *handle, bus_cb_setter_fn cb_setter)
 {
-    bus_callback_table_t cb_table;
-    data_model_properties_t data_model_value;
+    bus_callback_table_t cb_table = { 0 };
+    data_model_properties_t data_model_value = { 0 };
     cJSON* effective = NULL;
     cJSON* props_obj = NULL;
     cJSON* items = NULL;
@@ -405,9 +439,6 @@ static void handle_property_node(cJSON* root, const char* tr181_path, cJSON* pro
     if (!property_schema || !tr181_path || !handle || !cb_setter) {
         return;
     }
-
-    memset(&cb_table, 0, sizeof(cb_table));
-    memset(&data_model_value, 0, sizeof(data_model_value));
 
     /* 1) follow top-level $ref / combiners if present */
     effective = follow_ref_if_any(root, property_schema);
@@ -539,7 +570,6 @@ static bool parse_and_register_schema_internal(bus_handle_t *handle, cJSON* root
 
     child = props->child;
     while (child) {
-        // TODO Refactor to avoid code duplication with traverse_schema
         if (base_path == NULL) {
             base_path = child->string;
         }
