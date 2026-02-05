@@ -23,7 +23,6 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include "bus.h"
-#include "wifi_data_model_parse.h"
 #include "wifi_data_model.h"
 #include "wifi_dml_api.h"
 #include "wifi_dml_json_parser.h"
@@ -35,8 +34,57 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node);
 static bool schema_has_type(cJSON* schema, const char* want);
 static void parse_property_constraints(cJSON* schema_node, data_model_properties_t* props);
 static void traverse_schema(cJSON* root, cJSON* schema_node, const char* base_path, bus_handle_t *handle, bus_cb_setter_fn cb_setter);
-static void handle_property_node(cJSON* root, const char* tr181_path, cJSON* property_schema, bus_handle_t *handle, bus_cb_setter_fn cb_setter);
 static bool parse_and_register_schema_internal(bus_handle_t *handle, cJSON* root, const char* base_path, const char* search_key, bus_cb_setter_fn cb_setter);
+
+static int bus_register_namespace(bus_handle_t *handle, char *full_namespace, bus_element_type_t element_type,
+                                  bus_callback_table_t cb_table, data_model_properties_t  data_model_value, int num_of_rows)
+{   
+    wifi_util_info_print(WIFI_DMCLI,"%s:%d: register_namespace:[%s] element_type:%d\n", __func__, __LINE__, full_namespace, element_type);
+        
+    bus_data_element_t dataElements = { 0 };
+
+    dataElements.full_name       = full_namespace;
+    //snprintf(dataElements.full_name, BUS_MAX_NAME_LENGTH,"%s", full_namespace);
+    dataElements.type            = element_type;
+    dataElements.cb_table        = cb_table;
+    dataElements.bus_speed       = slow_speed;
+    dataElements.data_model_prop = data_model_value;
+
+    if (element_type == bus_element_type_table) {
+        //@TODO Add get handler to get table size.
+        uint32_t num_of_table_rows = 0;
+        if (wifi_elem_num_of_table_row(full_namespace, &num_of_table_rows) == bus_error_success) {
+            dataElements.num_of_table_row = num_of_table_rows;
+        } else if (wfa_elem_num_of_table_row(full_namespace, &num_of_table_rows) == bus_error_success) {
+            dataElements.num_of_table_row = num_of_table_rows;
+        } else {
+            dataElements.num_of_table_row = num_of_rows;
+        }
+        wifi_util_info_print(WIFI_DMCLI,"%s:%d: Add number of row:%d input value:%d\n", __func__, __LINE__, dataElements.num_of_table_row, num_of_rows);
+
+        //Tomporary added this @TODO TBD
+        if (strcmp(full_namespace, ACCESSPOINT_OBJ_TREE_NAME) == 0) {
+            wifi_util_info_print(WIFI_DMCLI,"%s:%d: register_namespace avoid for this:[%s]\n", __func__, __LINE__, full_namespace);
+            return 0;
+        }
+    }
+
+#if 0
+    element_node_t *node = bus_insert_element(handle, handle->root_element, &dataElements);
+    if (node != NULL) {
+        node->data_model_value = data_model_value;
+    }
+#else
+    uint32_t num_elements = 1;
+
+    bus_error_t rc = get_bus_descriptor()->bus_reg_data_element_fn(handle, &dataElements, num_elements);
+    if (rc != bus_error_success) {
+        wifi_util_error_print(WIFI_DMCLI,"%s:%d bus: bus_regDataElements failed:%s\n", __func__, __LINE__, full_namespace);
+    }
+#endif
+
+    return RETURN_OK;
+}
 
 /* Convert YANG path to TR-181 path format */
 static const char* yang_to_tr181(const char* yang_path)
@@ -52,13 +100,17 @@ static const char* yang_to_tr181(const char* yang_path)
         const char* tr181;
     };
     
-    // TODO review schema for more mappings
     static const struct yang_map mappings[] = {
         { "DeviceList", "Device" },
         { "RadioList", "Radio" },
         { "BSSList", "BSS" },
         { "STAList", "STA" },
         { "NetworkSSIDList", "SSID" },
+        { "OpClassScanList", "OpClassScan" },
+        { "ChannelScanList", "ChannelScan" },
+        { "NeighborList", "Neighbor" },
+        { "ActiveChannelList", "ActiveChannel" },
+        { "NonOccupancyChannelList", "NonOccupancyChannel" },
         { NULL, NULL }
     };
     
@@ -232,31 +284,21 @@ static cJSON* follow_ref_if_any(cJSON* root, cJSON* node)
             }
             it = next_it;  /* Use saved pointer for next iteration */
         }
-        
-        /* NOTE: We do NOT delete oneOf/anyOf here because we've added references to their
-         * child nodes. Deleting them would free the children, making our references invalid.
-         * The oneOf/anyOf nodes remain in the tree but are effectively ignored during
-         * subsequent processing since we've merged all their properties into the parent node. */
+
+        /* TODO: anyOf variants not fully registered
+         * 
+         * ISSUE: When both variants in anyOf have "properties" objects (e.g., WiFi7Capabilities_g
+         * and FreqSeparation_g), only the first variant's properties get registered. The second
+         * variant is skipped because merge_with_references() doesn't recursively merge nested
+         * "properties" objects - it only adds top-level keys that don't exist.
+         * 
+         * FIX: Need to recursively merge "properties" objects from all anyOf variants, not just
+         * skip when "properties" key already exists.
+         */
     }
     
     return node;
 }
-
-static void parse_property_readwrite(cJSON* schema_node, data_model_properties_t* props)
-{
-    if (!schema_node || !props) {
-        return;
-    }
-    
-    /* Default is read-only unless explicitly marked as writable */
-    cJSON* writable = cJSON_GetObjectItem(schema_node, "writable");
-    if (writable && cJSON_IsTrue(writable)) {
-        props->data_permission = 1;
-    } else {
-        props->data_permission = 0;
-    }
-}
-
 
 /* Type string values MUST be one of the six primitive types
 ("null", "boolean", "object", "array", "number", or "string"),
@@ -315,18 +357,26 @@ static void parse_property_constraints(cJSON* schema_node, data_model_properties
     if (!schema_node || !props) {
         return;
     }
+    cJSON* writable = NULL;
+    cJSON* minimum = NULL;
+    cJSON* maximum = NULL;
+    cJSON* str_enum = NULL;
 
     parse_property_type(schema_node, props);
-    parse_property_readwrite(schema_node, props);
 
-    if (props->data_permission == 0) {
-        /* Skip set validation parameters for read-only properties */
-        return;
-    } 
+    writable  = cJSON_GetObjectItem(schema_node, "writable");
+    /* Default is read-only unless explicitly marked as writable */
+    if (writable && cJSON_IsTrue(writable)) {
+        props->data_permission = 1;
+    } else {
+        props->data_permission = 0;
+        /* Skip validation parameters for read-only properties */
+        return;     
+    }
 
     /* min / max from JSON schema */
-    cJSON* minimum = cJSON_GetObjectItem(schema_node, "minimum");
-    cJSON* maximum = cJSON_GetObjectItem(schema_node, "maximum");
+    minimum = cJSON_GetObjectItem(schema_node, "minimum");
+    maximum = cJSON_GetObjectItem(schema_node, "maximum");
 
     if (minimum && cJSON_IsNumber(minimum)) {
         props->min_data_range = minimum->valuedouble;
@@ -336,7 +386,7 @@ static void parse_property_constraints(cJSON* schema_node, data_model_properties
         props->max_data_range = maximum->valuedouble;
     }
 
-    cJSON* str_enum = cJSON_GetObjectItem(schema_node, "enum");
+    str_enum = cJSON_GetObjectItem(schema_node, "enum");
 
     if (str_enum && cJSON_IsArray(str_enum)) {
         props->num_of_str_validation = cJSON_GetArraySize(str_enum);
@@ -403,7 +453,7 @@ static void find_parent_object_callback(const char* tr181_path, bus_cb_setter_fn
 }
 
 /* Helper: register a leaf property with proper read/write permissions */
-static void register_leaf_property(cJSON* schema_node, const char* tr181_path, 
+static void register_leaf_property(cJSON* schema_node, char* tr181_path, 
                                    bus_handle_t *handle,
                                    bus_cb_setter_fn cb_setter)
 {
@@ -425,7 +475,7 @@ static void register_leaf_property(cJSON* schema_node, const char* tr181_path,
 }
 
 /* Handle ANY property under an object: decide if TABLE or PROPERTY */
-static void handle_property_node(cJSON* root, const char* tr181_path, cJSON* property_schema, bus_handle_t *handle, bus_cb_setter_fn cb_setter)
+static void handle_property_node(cJSON* root, char* tr181_path, cJSON* property_schema, bus_handle_t *handle, bus_cb_setter_fn cb_setter)
 {
     bus_callback_table_t cb_table = { 0 };
     data_model_properties_t data_model_value = { 0 };
@@ -666,17 +716,16 @@ int parse_json_schema_and_register(bus_handle_t *handle, const char *json_schema
     return rc;
 }
 
-int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema_filename)
+int parse_and_register_wfa_schema(bus_handle_t *handle, const char *json_schema_filename)
 {
     return parse_json_schema_and_register(handle, json_schema_filename, 
                                           "Device.WiFi.DataElements.Network", "wfa-dataelements:Network",
                                           wfa_set_bus_callbackfunc_pointers);
 }
 
-int parse_native_dml_schema(bus_handle_t *handle, const char *json_schema_filename)
+int parse_and_register_native_dml_schema(bus_handle_t *handle, const char *json_schema_filename)
 {
-    // TODO depends on JSON format used for Native DM base_path may be "Device.WiFi"
     return parse_json_schema_and_register(handle, json_schema_filename, 
                                           NULL, NULL,
-                                          set_bus_callbackfunc_pointers);
+                                          wifi_set_bus_callbackfunc_pointers);
 }

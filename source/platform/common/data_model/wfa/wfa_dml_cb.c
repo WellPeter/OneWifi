@@ -23,7 +23,6 @@
 #include <stdint.h>
 #include "bus.h"
 #include "wifi_data_model.h"
-#include "wifi_data_model_parse.h"
 #include "wifi_dml_api.h"
 #include "wfa_data_model.h"
 

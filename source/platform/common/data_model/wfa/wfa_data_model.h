@@ -425,6 +425,6 @@ typedef struct wfa_dml_data_model {
  */
 int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table);
 
- bus_error_t wfa_elem_num_of_table_row(char *event_name, uint32_t *table_row_size);
+bus_error_t wfa_elem_num_of_table_row(char *event_name, uint32_t *table_row_size);
 
 #endif // WFA_DATA_MODEL_H

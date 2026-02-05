@@ -53,7 +53,7 @@ int parse_json_schema_and_register(bus_handle_t *handle, const char *json_schema
  * @param json_schema_filename Path to the JSON schema file
  * @return RETURN_OK on success, RETURN_ERR on failure
  */
-int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema_filename);
+int parse_and_register_wfa_schema(bus_handle_t *handle, const char *json_schema_filename);
 
 /**
  * @brief Parses native DML schema from JSON file and registers it with the bus.
@@ -64,6 +64,6 @@ int parse_wfa_data_elements_schema(bus_handle_t *handle, const char *json_schema
  * @param json_schema_filename Path to the JSON schema file
  * @return RETURN_OK on success, RETURN_ERR on failure
  */
-int parse_native_dml_schema(bus_handle_t *handle, const char *json_schema_filename);
+int parse_and_register_native_dml_schema(bus_handle_t *handle, const char *json_schema_filename);
 
 #endif // WIFI_DML_JSON_PARSER_H

@@ -21,7 +21,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include "bus.h"
-#include "wifi_data_model_parse.h"
 #include "wifi_data_model.h"
 #include "wifi_dml_api.h"
 #include "wfa_data_model.h"
@@ -91,11 +90,10 @@ bus_error_t de_device_table_remove_row_handler(char const* rowName)
     return bus_error_success;
 }
 
-// TODO: Make the common function for wifi and wfa data model with responsive cb func pointers
 /* WFA DataElements callback function pointer mapping */
 int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
 {
-    static const bus_data_cb_func_t bus_data_cb[] = {
+    static const bus_data_cb_func_t bus_wfa_data_cb[] = {
         /* TR-181 Path
             get                             set
             add_row                         rm_row
@@ -116,24 +114,5 @@ int wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_t
         },
     };
 
-    /* For now, use default handlers */
-    bus_callback_table_t bus_default_cb = {
-        default_get_param_value, default_set_param_value, default_table_add_row_handler,
-        default_table_remove_row_handler, default_event_sub_handler, NULL
-    };
-
-    uint32_t index = 0;
-
-    for (index = 0; index < (uint32_t)ARRAY_SZ(bus_data_cb); index++) {
-        if (STR_CMP(full_namespace, bus_data_cb[index].cb_table_name)) {
-            memcpy(cb_table, &bus_data_cb[index].cb_func, sizeof(bus_callback_table_t));
-            return RETURN_OK;
-        }
-    }
-
-    /* No match found, use default handlers */
-    wifi_util_info_print(WIFI_DMCLI,"%s:%d:default cb set for namespace:[%s]\n", __func__, __LINE__, full_namespace);
-    memcpy(cb_table, &bus_default_cb, sizeof(bus_callback_table_t));
-
-    return RETURN_OK;
+    return set_bus_callbackfunc_pointers(full_namespace, cb_table, bus_wfa_data_cb, ARRAY_SZ(bus_wfa_data_cb));
 }
