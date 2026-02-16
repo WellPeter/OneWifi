@@ -25,24 +25,14 @@
 #include "bus.h"
 
 /**
- * @brief Get unsigned integer parameter value for WFA Network
- * 
- * @param obj_ins_context Object instance context
- * @param param_name Parameter name to retrieve
- * @param output_value Pointer to store the retrieved value
- * @return true on success, false on failure
- */
-bool wfa_network_get_param_uint_value(void *obj_ins_context, char *param_name, uint32_t *output_value);
-
-/**
  * @brief Get string parameter value for WFA Network
  * 
  * @param obj_ins_context Object instance context
  * @param param_name Parameter name to retrieve
- * @param output_value Pointer to scratch buffer for storing the retrieved string
+ * @param output_value Pointer to raw data object
  * @return true on success, false on failure
  */
-bool wfa_network_get_param_string_value(void *obj_ins_context, char *param_name, scratch_data_buff_t *output_value);
+bool wfa_network_get_param_value(void *obj_ins_context, char *param_name, raw_data_t *p_data);
 
 /**
  * @brief Get string parameter value for WFA Network SSID
@@ -55,5 +45,11 @@ bool wfa_network_get_param_string_value(void *obj_ins_context, char *param_name,
 bus_error_t wfa_network_ssid_get_param_value(void *obj_ins_context, char *param_name, raw_data_t *p_data);
 
 bus_error_t wfa_apmld_get_param_value(void *obj_ins_context, char *param_name, raw_data_t *p_data);
+
+bus_error_t wfa_stamld_get_param_value(void *obj_ins_context, char *param_name, raw_data_t *p_data);
+
+bus_error_t wfa_affiliatedsta_get_param_value(void *obj_ins_context, char *param_name, raw_data_t *p_data);
+
+bus_error_t wfa_tidlinkmap_get_param_value(void *obj_ins_context, char *param_name, raw_data_t *p_data);
 
 #endif // WFA_DML_CB_H
