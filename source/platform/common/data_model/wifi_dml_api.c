@@ -76,6 +76,81 @@ uint8_t rssi_to_rcpi(int rssi_dbm)
     return (rssi_dbm + 110) * 2;
 }
 
+/* RSN Selector constants (IEEE 802.11-2020) */
+#define RSN_SELECTOR(a, b, c, d) \
+    ((((uint32_t) (a)) << 24) | (((uint32_t) (b)) << 16) | (((uint32_t) (c)) << 8) | (uint32_t) (d))
+
+/* Map entry structure for RSN selectors */
+typedef struct {
+    const char *name;
+    uint32_t selector;
+} rsn_map_entry_t;
+
+static bool rsn_selector_lookup(const rsn_map_entry_t *map, const char *name, char *out, size_t out_len)
+{
+    if (!name || !out || out_len < 9 || !map) {
+        return false;
+    }
+
+    while (map->name) {
+        if (strncasecmp(map->name, name, strlen(map->name) + 1) == 0) {
+            snprintf(out, out_len, "%08X", map->selector);
+            return true;
+        }
+        map++;
+    }
+
+    return false;
+}
+
+bool rsn_akm_selector_hex(const char *akm, char *out, size_t out_len)
+{
+    /* AKM Selector Map */
+    const rsn_map_entry_t akm_map[] = {
+        { "wpa-eap", RSN_SELECTOR(0x00, 0x0f, 0xac, 1) },
+        { "wpa-eap-128", RSN_SELECTOR(0x00, 0x0f, 0xac, 1) },
+        { "wpa-psk", RSN_SELECTOR(0x00, 0x0f, 0xac, 2) },
+        { "ft-eap", RSN_SELECTOR(0x00, 0x0f, 0xac, 3) },
+        { "ft-psk", RSN_SELECTOR(0x00, 0x0f, 0xac, 4) },
+        { "802.1x-sha256", RSN_SELECTOR(0x00, 0x0f, 0xac, 5) },
+        { "psk-sha256", RSN_SELECTOR(0x00, 0x0f, 0xac, 6) },
+        { "sae", RSN_SELECTOR(0x00, 0x0f, 0xac, 8) },
+        { "ft-sae", RSN_SELECTOR(0x00, 0x0f, 0xac, 9) },
+        { "wpa-eap-suite-b", RSN_SELECTOR(0x00, 0x0f, 0xac, 11) },
+        { "wpa-eap-suite-b-192", RSN_SELECTOR(0x00, 0x0f, 0xac, 12) },
+        { "ft-eap-sha384", RSN_SELECTOR(0x00, 0x0f, 0xac, 13) },
+        { "sae-ext", RSN_SELECTOR(0x00, 0x0f, 0xac, 24) },
+        { NULL, 0 }
+    };
+
+    return rsn_selector_lookup(akm_map, akm, out, out_len);
+}
+
+bool rsn_cipher_selector_hex(const char *cipher, char *out, size_t out_len)
+{
+    /* Cipher Selector Map */
+    const rsn_map_entry_t cipher_map[] = {
+        { "wep", RSN_SELECTOR(0x00, 0x0f, 0xac, 1) },
+        { "wep-40", RSN_SELECTOR(0x00, 0x0f, 0xac, 1) },
+        { "tkip", RSN_SELECTOR(0x00, 0x0f, 0xac, 2) },
+        { "ccmp", RSN_SELECTOR(0x00, 0x0f, 0xac, 4) },
+        { "ccmp-128", RSN_SELECTOR(0x00, 0x0f, 0xac, 4) },
+        { "wep-104", RSN_SELECTOR(0x00, 0x0f, 0xac, 5) },
+        { "bip", RSN_SELECTOR(0x00, 0x0f, 0xac, 6) },
+        { "bip-cmac-128", RSN_SELECTOR(0x00, 0x0f, 0xac, 6) },
+        { "gcmp", RSN_SELECTOR(0x00, 0x0f, 0xac, 8) },
+        { "gcmp-128", RSN_SELECTOR(0x00, 0x0f, 0xac, 8) },
+        { "gcmp-256", RSN_SELECTOR(0x00, 0x0f, 0xac, 9) },
+        { "ccmp-256", RSN_SELECTOR(0x00, 0x0f, 0xac, 10) },
+        { "bip-gmac-128", RSN_SELECTOR(0x00, 0x0f, 0xac, 11) },
+        { "bip-gmac-256", RSN_SELECTOR(0x00, 0x0f, 0xac, 12) },
+        { "bip-cmac-256", RSN_SELECTOR(0x00, 0x0f, 0xac, 13) },
+        { NULL, 0 }
+    };
+
+    return rsn_selector_lookup(cipher_map, cipher, out, out_len);
+}
+
 uint32_t get_sec_mode_string_from_int(wifi_security_modes_t security_mode, char *security_name)
 {
     uint32_t index;
