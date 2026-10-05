@@ -3652,18 +3652,9 @@ bool is_mlo_config_matching(wifi_vap_info_t *main_vap, wifi_vap_info_t *vap,
         return false;
     }
 
-    /* Compare Password/Key */
-    if (strncmp(main_vap->u.bss_info.security.u.key.key,
-                vap->u.bss_info.security.u.key.key,
-                sizeof(main_vap->u.bss_info.security.u.key.key)) != 0) {
-        wifi_util_info_print(log_type,
-            "%s:%d: vap_index=%d MLO config mismatch with main link vap_index=%d: "
-            "password/key does not match\n",
-            __func__, __LINE__, vap->vap_index, main_vap->vap_index);
-        return false;
-    }
-
-    /* Compare Security Mode — WPA3 variants are MLO-compatible across bands */
+    /* Compare Security Mode first — WPA3 variants are MLO-compatible across bands.
+     * Checked before the key so that a mode mismatch involving a keyless mode
+     * (open/OWE) is reported as a mode mismatch, not as a password mismatch. */
     if (!is_mlo_security_mode_compatible(main_vap->u.bss_info.security.mode,
             vap->u.bss_info.security.mode)) {
         wifi_util_info_print(log_type,
@@ -3671,6 +3662,19 @@ bool is_mlo_config_matching(wifi_vap_info_t *main_vap, wifi_vap_info_t *vap,
             "security mode %d != %d\n",
             __func__, __LINE__, vap->vap_index, main_vap->vap_index,
             vap->u.bss_info.security.mode, main_vap->u.bss_info.security.mode);
+        return false;
+    }
+
+    /* Compare Password/Key — only meaningful for key-based security modes */
+    if (main_vap->u.bss_info.security.mode != wifi_security_mode_none &&
+        main_vap->u.bss_info.security.mode != wifi_security_mode_enhanced_open &&
+        strncmp(main_vap->u.bss_info.security.u.key.key,
+                vap->u.bss_info.security.u.key.key,
+                sizeof(main_vap->u.bss_info.security.u.key.key)) != 0) {
+        wifi_util_info_print(log_type,
+            "%s:%d: vap_index=%d MLO config mismatch with main link vap_index=%d: "
+            "password/key does not match\n",
+            __func__, __LINE__, vap->vap_index, main_vap->vap_index);
         return false;
     }
 
